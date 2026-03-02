@@ -2,7 +2,7 @@ services:
   - type: web
     name: irctc-backend
     env: python
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate
+    buildCommand: pip install -r requirements.txt && python irctc_backend/manage.py collectstatic --noinput && python irctc_backend/manage.py migrate
     startCommand: gunicorn irctc_backend.wsgi:application --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
