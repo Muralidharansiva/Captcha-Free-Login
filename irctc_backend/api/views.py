@@ -16,7 +16,10 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.http import JsonResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
-import razorpay
+try:
+    import razorpay
+except ModuleNotFoundError:
+    razorpay = None
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
@@ -260,6 +263,14 @@ def _resolve_user_profile(identity, create=False):
         email_value = identity.lower() if "@" in identity else None
         return UserProfile.objects.create(firebase_uid=identity, email=email_value)
     return None
+
+
+def _get_razorpay_client():
+    if razorpay is None:
+        return None
+    if not settings.RAZORPAY_KEY_ID or not settings.RAZORPAY_KEY_SECRET:
+        return None
+    return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
 
 @csrf_exempt
@@ -719,6 +730,8 @@ def download_ticket(request):
     passengers = booking.passengers or []
     ttr_verified = bool(train.get("_ttrVerified", False))
     ttr_verified_at = train.get("_ttrVerifiedAt")
+    token = signing.dumps({"bookingId": booking.id, "pnr": booking.pnr}, salt="ttr-ticket")
+    verify_url = request.build_absolute_uri(f"/api/ttr-verify-ticket/?token={quote(token)}")
 
     try:
         from reportlab.lib.pagesizes import A4
@@ -763,8 +776,6 @@ def download_ticket(request):
     width, height = A4
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
-    token = signing.dumps({"bookingId": booking.id, "pnr": booking.pnr}, salt="ttr-ticket")
-    verify_url = request.build_absolute_uri(f"/api/ttr-verify-ticket/?token={quote(token)}")
 
     # Header band
     c.setFillColor(colors.HexColor("#1f78de"))
@@ -902,9 +913,9 @@ def verify_payment(request):
     if not user_profile:
         return Response({"error": "User not found"}, status=400)
 
-    client = razorpay.Client(
-        auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-    )
+    client = _get_razorpay_client()
+    if client is None:
+        return Response({"error": "Razorpay is not configured on server"}, status=503)
     try:
         client.utility.verify_payment_signature({
             "razorpay_payment_id": razorpay_payment_id,
@@ -993,9 +1004,9 @@ def create_razorpay_order(request):
         if amount_int <= 0:
             return Response({"error": "Amount must be greater than zero"}, status=400)
 
-        client = razorpay.Client(
-            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-        )
+        client = _get_razorpay_client()
+        if client is None:
+            return Response({"error": "Razorpay is not configured on server"}, status=503)
 
         order = client.order.create({
             "amount": amount_int * 100,

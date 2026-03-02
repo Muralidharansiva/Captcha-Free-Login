@@ -2,8 +2,23 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
-import dj_database_url
-from dotenv import load_dotenv
+try:
+    import dj_database_url
+except ModuleNotFoundError:
+    dj_database_url = None
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    def load_dotenv(*_args, **_kwargs):  # type: ignore[no-redef]
+        return False
+
+try:
+    import rest_framework_simplejwt  # noqa: F401
+except ModuleNotFoundError:
+    SIMPLE_JWT_AVAILABLE = False
+else:
+    SIMPLE_JWT_AVAILABLE = True
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -71,7 +86,7 @@ TEMPLATES = [
 WSGI_APPLICATION = "irctc_backend.wsgi.application"
 
 database_url = os.getenv("DATABASE_URL", "").strip()
-if database_url:
+if database_url and dj_database_url is not None:
     DATABASES = {
         "default": dj_database_url.parse(
             database_url,
@@ -120,9 +135,11 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-    ],
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        ["rest_framework_simplejwt.authentication.JWTAuthentication"]
+        if SIMPLE_JWT_AVAILABLE
+        else []
+    ),
 }
 
 SIMPLE_JWT = {
