@@ -23,4 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 .env
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.env
+__pycache__/
+*.pyc
 irctc_backend/api/serviceAccountKey.json
