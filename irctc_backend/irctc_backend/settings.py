@@ -27,11 +27,10 @@ load_dotenv(BASE_DIR / ".env")
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 # CORS Configuration
+DEFAULT_FRONTEND_ORIGINS = ["https://captcha-free-login.vercel.app"]
 CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
-
-CORS_ALLOWED_ORIGINS = _split_csv(os.getenv("CORS_ALLOWED_ORIGINS", ""))
-
-CSRF_TRUSTED_ORIGINS = _split_csv(os.getenv("CSRF_TRUSTED_ORIGINS", ""))
+CORS_ALLOWED_ORIGINS = _split_csv(os.getenv("CORS_ALLOWED_ORIGINS", "")) or DEFAULT_FRONTEND_ORIGINS
+CSRF_TRUSTED_ORIGINS = _split_csv(os.getenv("CSRF_TRUSTED_ORIGINS", "")) or DEFAULT_FRONTEND_ORIGINS
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
@@ -126,14 +125,6 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-cors_allow_all = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
-CORS_ALLOW_ALL_ORIGINS = cors_allow_all
-CORS_ALLOWED_ORIGINS = _split_csv(os.getenv("CORS_ALLOWED_ORIGINS", ""))
-
-csrf_trusted = _split_csv(os.getenv("CSRF_TRUSTED_ORIGINS", ""))
-if csrf_trusted:
-    CSRF_TRUSTED_ORIGINS = csrf_trusted
 
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
