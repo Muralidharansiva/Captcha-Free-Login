@@ -134,8 +134,8 @@ const Auth = () => {
       setOtpChallengeToken(data.challengeToken);
       setOtpDestination(data.otpDestination);
       setStep('otp');
-      setOtpExpiresInSeconds(data.otpExpiresInSeconds || 300);
-      setCountdown(data.otpExpiresInSeconds || 300);
+      setOtpExpiresInSeconds(data.otpExpiresInSeconds || 50);
+      setCountdown(data.otpExpiresInSeconds || 50);
 
       toast({
         title: 'OTP Sent',

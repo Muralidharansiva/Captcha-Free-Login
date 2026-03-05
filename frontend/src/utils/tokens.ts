@@ -1,7 +1,7 @@
-import { auth } from '@/firebase';
+import { getAccessToken } from '@/utils/auth';
 
 export const getFirebaseToken = async (): Promise<string> => {
-  const user = auth.currentUser;
-  if (!user) throw new Error('User not authenticated');
-  return await user.getIdToken();
+  const token = getAccessToken();
+  if (!token) throw new Error('User not authenticated');
+  return token;
 };

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { TicketDisplay } from '@/components/TicketDisplay';
 import { Booking } from '@/types/booking';
 import { Download, Home } from 'lucide-react';
-import { api } from '@/utils/api';
+import { api, API_BASE_URL } from '@/utils/api';
 import { getAccessToken, getCurrentUser, isAuthenticated } from '@/utils/auth';
 
 const normalizeBooking = (b: any): Booking => ({
@@ -44,7 +44,7 @@ const Confirmation = () => {
   };
 
   const buildTicketEndpoint = (download: boolean) => {
-    const base = `${import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'}/`;
+    const base = `${API_BASE_URL}/`;
     const email = encodeURIComponent(getUserIdentity());
     const id = encodeURIComponent(bookingId || '');
     const flag = download ? '1' : '0';
@@ -198,3 +198,4 @@ const Confirmation = () => {
 };
 
 export default Confirmation;
+

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Booking } from '@/types/booking';
 import { getAccessToken, getCurrentUser, isAuthenticated, logout } from '@/utils/auth';
-import { api } from '@/utils/api';
+import { api, API_BASE_URL } from '@/utils/api';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, Ticket, Calendar, MapPin, LogOut, IndianRupee, Download } from 'lucide-react';
 
@@ -41,7 +41,7 @@ const Dashboard = () => {
   const downloadTicket = async (bookingId: string, pnr: string) => {
     if (!userIdentity) return;
     try {
-      const base = `${import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'}/`;
+      const base = `${API_BASE_URL}/`;
       const url = `${base}download-ticket/?bookingId=${encodeURIComponent(bookingId)}&email=${encodeURIComponent(userIdentity)}&download=1`;
       const token = getAccessToken();
       const response = await fetch(url, {
@@ -283,3 +283,4 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+

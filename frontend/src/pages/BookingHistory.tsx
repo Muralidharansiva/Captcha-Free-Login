@@ -4,8 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
+import { API_BASE_URL } from '@/utils/api';
+import { getAccessToken } from '@/utils/auth';
 
-import { getFirebaseIdToken } from '@/firebase';
 import { Calendar, Ticket, MapPin, IndianRupee } from 'lucide-react';
 
 type Booking = {
@@ -41,10 +42,10 @@ const BookingHistory = () => {
   useEffect(() => {
     const fetchBookings = async () => {
       try {
-        const token = await getFirebaseIdToken();
+        const token = getAccessToken();
         if (!token) throw new Error('Not authenticated');
 
-        const res = await fetch('http://127.0.0.1:8000/api/bookings/', {
+        const res = await fetch(`${API_BASE_URL}/bookings/`, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -141,3 +142,4 @@ const BookingHistory = () => {
 };
 
 export default BookingHistory;
+
