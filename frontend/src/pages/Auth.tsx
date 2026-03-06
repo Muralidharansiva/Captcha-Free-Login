@@ -44,6 +44,13 @@ const Auth = () => {
   }, [navigate]);
 
   useEffect(() => {
+    // Warm up backend while user fills credentials to reduce first-request latency.
+    api('', 'GET').catch(() => {
+      // Ignore warm-up failures; normal submit will show proper errors.
+    });
+  }, []);
+
+  useEffect(() => {
     trackerRef.current = new BehaviorTracker();
     return () => trackerRef.current?.cleanup();
   }, []);

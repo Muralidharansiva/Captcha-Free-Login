@@ -116,3 +116,12 @@ class LoginAttempt(models.Model):
     ip_address = models.CharField(max_length=64, blank=True, null=True)
     user_agent = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=32, default="failed")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["timestamp"]),
+            models.Index(fields=["ip_address", "timestamp"]),
+            models.Index(fields=["username", "timestamp"]),
+            models.Index(fields=["email", "timestamp"]),
+            models.Index(fields=["status", "timestamp"]),
+        ]

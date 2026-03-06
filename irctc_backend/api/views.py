@@ -118,21 +118,22 @@ def _record_attempt(request, *, status, username=None, email=None):
 
 
 def _is_rate_limited(request, *, username=None, email=None):
+    def _has_at_least(queryset, limit):
+        # Pull only up to the threshold IDs instead of counting all rows.
+        ids = list(queryset.values_list("id", flat=True)[:limit])
+        return len(ids) >= limit
+
     now = timezone.now()
     ip = _client_ip(request)
     recent_window = now - timedelta(minutes=10)
     burst_window = now - timedelta(minutes=1)
 
-    ip_recent_count = LoginAttempt.objects.filter(
-        ip_address=ip, timestamp__gte=recent_window
-    ).count()
-    if ip_recent_count >= 40:
+    ip_recent = LoginAttempt.objects.filter(ip_address=ip, timestamp__gte=recent_window).order_by("-timestamp")
+    if _has_at_least(ip_recent, 40):
         return True
 
-    ip_burst_count = LoginAttempt.objects.filter(
-        ip_address=ip, timestamp__gte=burst_window
-    ).count()
-    if ip_burst_count >= 10:
+    ip_burst = LoginAttempt.objects.filter(ip_address=ip, timestamp__gte=burst_window).order_by("-timestamp")
+    if _has_at_least(ip_burst, 10):
         return True
 
     if username:
@@ -140,8 +141,8 @@ def _is_rate_limited(request, *, username=None, email=None):
             username=username,
             status__in=["login_failed", "otp_failed", "blocked"],
             timestamp__gte=recent_window,
-        ).count()
-        if username_failures >= 8:
+        ).order_by("-timestamp")
+        if _has_at_least(username_failures, 8):
             return True
 
     if email:
@@ -149,8 +150,8 @@ def _is_rate_limited(request, *, username=None, email=None):
             email=email,
             status__in=["login_failed", "otp_failed", "blocked"],
             timestamp__gte=recent_window,
-        ).count()
-        if email_failures >= 8:
+        ).order_by("-timestamp")
+        if _has_at_least(email_failures, 8):
             return True
 
     return False
