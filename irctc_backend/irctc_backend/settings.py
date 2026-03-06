@@ -1,4 +1,4 @@
-import os
+﻿import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -188,23 +188,34 @@ EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", default=True)
 EMAIL_USE_SSL = _env_bool("EMAIL_USE_SSL", default=False)
 EMAIL_TIMEOUT = _env_int("EMAIL_TIMEOUT", 8)
 
-# Support both generic and Django-standard env names.
+# Keep transport mode valid even when both flags are accidentally set.
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    EMAIL_USE_SSL = False
+
+# Support Brevo aliases + generic + Django-standard env names.
 EMAIL_HOST_USER = (
     os.getenv("EMAIL_HOST_USER")
+    or os.getenv("BREVO_SMTP_LOGIN")
+    or os.getenv("SMTP_LOGIN")
     or os.getenv("EMAIL_USER")
     or ""
 ).strip()
 EMAIL_HOST_PASSWORD = (
     os.getenv("EMAIL_HOST_PASSWORD")
+    or os.getenv("BREVO_SMTP_KEY")
+    or os.getenv("SMTP_KEY")
     or os.getenv("EMAIL_PASS")
     or os.getenv("EMAIL_PASSWORD")
     or ""
 ).strip()
 DEFAULT_FROM_EMAIL = (
     os.getenv("DEFAULT_FROM_EMAIL")
+    or os.getenv("BREVO_SENDER_EMAIL")
+    or os.getenv("SENDER_EMAIL")
     or EMAIL_HOST_USER
     or "noreply@example.com"
-)
+).strip()
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # OTP security + delivery settings.
 OTP_EXPIRY_SECONDS = _env_int("OTP_EXPIRY_SECONDS", 45)
@@ -233,4 +244,3 @@ CACHES = {
 }
 
 SESSION_TOKEN_MAX_AGE_SECONDS = int(os.getenv("SESSION_TOKEN_MAX_AGE_SECONDS", "604800"))
-
