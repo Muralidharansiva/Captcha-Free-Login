@@ -1,4 +1,4 @@
-import json
+﻿import json
 import secrets
 import hashlib
 from decimal import Decimal
@@ -425,16 +425,14 @@ def login_view(request):
         otp_hash=EmailOTP.hash_otp(otp),
         ip_address=_client_ip(request),
     )
-
     otp_sent = _send_login_otp_email(user.email, otp)
-    otp_fallback_enabled = bool(getattr(settings, "OTP_FALLBACK_TO_RESPONSE", True))
-    if not otp_sent and not otp_fallback_enabled:
+    if not otp_sent:
         otp_record.delete()
         _record_attempt(request, status="blocked", username=user.username, email=user.email)
         return JsonResponse({"error": "Unable to send OTP email. Try again shortly."}, status=503)
 
-    otp_delivery = "email" if otp_sent else "in_app"
-    otp_destination = _masked_email(user.email) if otp_sent else "on-screen code"
+    otp_expiry_seconds = int(getattr(settings, "OTP_EXPIRY_SECONDS", 45) or 45)
+    otp_destination = _masked_email(user.email)
     challenge_token = signing.dumps(
         {
             "otp_id": otp_record.id,
@@ -445,7 +443,7 @@ def login_view(request):
     )
     _record_attempt(
         request,
-        status="otp_sent" if otp_sent else "otp_fallback",
+        status="otp_sent",
         username=user.username,
         email=user.email,
     )
@@ -454,11 +452,8 @@ def login_view(request):
         "success": True,
         "challengeToken": challenge_token,
         "otpDestination": otp_destination,
-        "otpExpiresInSeconds": 300,
-        "otpDelivery": otp_delivery,
+        "otpExpiresInSeconds": otp_expiry_seconds,
     }
-    if not otp_sent:
-        payload["otpFallback"] = otp
 
     return JsonResponse(payload)
 
@@ -534,7 +529,7 @@ def verify_email_otp(request):
         challenge_payload = signing.loads(
             challenge_token,
             salt="auth-otp-challenge",
-            max_age=300,
+            max_age=int(getattr(settings, "OTP_EXPIRY_SECONDS", 45) or 45),
         )
     except signing.BadSignature:
         return JsonResponse({"error": "Invalid or expired OTP challenge"}, status=400)
@@ -1444,3 +1439,4 @@ def admin_analytics(request):
 @csrf_exempt
 def razorpay_webhook(request):
     return JsonResponse({"status": "Webhook received"})
+

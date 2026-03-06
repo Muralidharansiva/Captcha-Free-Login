@@ -1,6 +1,7 @@
-# api/models.py
+﻿# api/models.py
 
 from django.db import models
+from django.conf import settings
 from django.utils import timezone
 import uuid
 import hashlib
@@ -18,7 +19,8 @@ class EmailOTP(models.Model):
     ip_address = models.CharField(max_length=64, blank=True, null=True)
 
     def is_expired(self):
-        return timezone.now() > self.created_at + timezone.timedelta(minutes=5)
+        expiry_seconds = int(getattr(settings, "OTP_EXPIRY_SECONDS", 45) or 45)
+        return timezone.now() > self.created_at + timezone.timedelta(seconds=expiry_seconds)
 
     @staticmethod
     def hash_otp(otp):

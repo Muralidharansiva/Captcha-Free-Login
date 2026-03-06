@@ -1,4 +1,4 @@
-import os
+﻿import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -170,7 +170,8 @@ EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "5"))
 EMAIL_HOST_USER = os.getenv("EMAIL_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_PASS", "")
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "noreply@example.com")
-OTP_FALLBACK_TO_RESPONSE = os.getenv("OTP_FALLBACK_TO_RESPONSE", "True").lower() == "true"
+OTP_EXPIRY_SECONDS = int(os.getenv("OTP_EXPIRY_SECONDS", "45"))
+OTP_FALLBACK_TO_RESPONSE = os.getenv("OTP_FALLBACK_TO_RESPONSE", "False").lower() == "true"
 
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "change_this")
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
@@ -193,3 +194,4 @@ CACHES = {
 }
 
 SESSION_TOKEN_MAX_AGE_SECONDS = int(os.getenv("SESSION_TOKEN_MAX_AGE_SECONDS", "604800"))
+
