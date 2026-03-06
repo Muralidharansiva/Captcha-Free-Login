@@ -1,4 +1,4 @@
-﻿import os
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -216,6 +216,14 @@ DEFAULT_FROM_EMAIL = (
     or "noreply@example.com"
 ).strip()
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
+BREVO_API_KEY = (
+    os.getenv("BREVO_API_KEY")
+    or os.getenv("BREVO_API_TOKEN")
+    or ""
+).strip()
+BREVO_API_URL = os.getenv("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email").strip()
+BREVO_API_TIMEOUT = _env_int("BREVO_API_TIMEOUT", 10)
+BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "Captcha Free Login").strip()
 
 # OTP security + delivery settings.
 OTP_EXPIRY_SECONDS = _env_int("OTP_EXPIRY_SECONDS", 45)
@@ -244,3 +252,4 @@ CACHES = {
 }
 
 SESSION_TOKEN_MAX_AGE_SECONDS = int(os.getenv("SESSION_TOKEN_MAX_AGE_SECONDS", "604800"))
+

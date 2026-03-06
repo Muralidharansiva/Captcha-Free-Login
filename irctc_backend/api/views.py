@@ -7,6 +7,7 @@ from decimal import Decimal
 from datetime import timedelta, date
 from io import BytesIO
 from urllib.parse import quote
+from urllib import request as urlrequest, error as urlerror
 import django.utils.timezone as timezone
 from django.conf import settings
 from django.contrib.auth import authenticate
@@ -259,42 +260,96 @@ def _coerce_journey_date(value):
     except ValueError:
         return None
 
+def _send_login_otp_via_brevo_api(email, otp):
+    api_key = str(getattr(settings, "BREVO_API_KEY", "") or "").strip()
+    if not api_key:
+        return False
+
+    sender_email = str(getattr(settings, "DEFAULT_FROM_EMAIL", "") or "").strip()
+    sender_name = str(getattr(settings, "BREVO_SENDER_NAME", "Captcha Free Login") or "Captcha Free Login").strip()
+    if not sender_email or "@" not in sender_email:
+        logger.warning("Brevo API OTP skipped: DEFAULT_FROM_EMAIL is missing or invalid")
+        return False
+
+    timeout = int(getattr(settings, "BREVO_API_TIMEOUT", 10) or 10)
+    api_url = str(getattr(settings, "BREVO_API_URL", "https://api.brevo.com/v3/smtp/email") or "").strip()
+
+    payload = {
+        "sender": {"email": sender_email, "name": sender_name},
+        "to": [{"email": email}],
+        "subject": "Your Login OTP",
+        "textContent": f"Your OTP is {otp}",
+    }
+
+    req = urlrequest.Request(
+        api_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "accept": "application/json",
+            "content-type": "application/json",
+            "api-key": api_key,
+        },
+        method="POST",
+    )
+
+    try:
+        with urlrequest.urlopen(req, timeout=max(5, min(timeout, 20))) as response:
+            status_code = getattr(response, "status", response.getcode())
+            if 200 <= status_code < 300:
+                return True
+            logger.warning("Brevo API OTP failed with status %s", status_code)
+            return False
+    except urlerror.HTTPError as exc:
+        logger.warning("Brevo API OTP HTTP error: %s", exc)
+        return False
+    except Exception as exc:
+        logger.warning("Brevo API OTP send failed: %s", exc)
+        return False
+
+
 def _send_login_otp_email(email, otp):
     """
-    Send login OTP with bounded timeout + retry so occasional SMTP blips
-    do not break login for valid users.
-    Returns True only when at least one message is accepted.
+    Send login OTP with SMTP first, then Brevo API fallback.
+    Returns True only when at least one provider accepts the message.
     """
     smtp_user = str(getattr(settings, "EMAIL_HOST_USER", "") or "").strip()
     smtp_pass = str(getattr(settings, "EMAIL_HOST_PASSWORD", "") or "").strip()
-
-    if not smtp_user or not smtp_pass:
-        logger.warning("OTP email skipped: SMTP credentials are not configured")
-        return False
 
     timeout = int(getattr(settings, "EMAIL_TIMEOUT", 8) or 8)
     attempts = max(1, int(getattr(settings, "OTP_EMAIL_RETRY_COUNT", 2) or 2))
     retry_delay_ms = max(100, int(getattr(settings, "OTP_EMAIL_RETRY_DELAY_MS", 600) or 600))
 
-    for attempt in range(1, attempts + 1):
-        try:
-            connection = get_connection(timeout=max(5, min(timeout, 15)))
-            sent_count = send_mail(
-                "Your Login OTP",
-                f"Your OTP is {otp}",
-                settings.DEFAULT_FROM_EMAIL or smtp_user or "noreply@example.com",
-                [email],
-                fail_silently=False,
-                connection=connection,
-            )
-            if sent_count > 0:
-                return True
-        except Exception as exc:
-            logger.warning("OTP email send failed on attempt %s/%s: %s", attempt, attempts, exc)
+    smtp_attempted = False
+    if smtp_user and smtp_pass:
+        smtp_attempted = True
+        for attempt in range(1, attempts + 1):
+            try:
+                connection = get_connection(timeout=max(5, min(timeout, 15)))
+                sent_count = send_mail(
+                    "Your Login OTP",
+                    f"Your OTP is {otp}",
+                    settings.DEFAULT_FROM_EMAIL or smtp_user or "noreply@example.com",
+                    [email],
+                    fail_silently=False,
+                    connection=connection,
+                )
+                if sent_count > 0:
+                    return True
+            except Exception as exc:
+                logger.warning("OTP SMTP send failed on attempt %s/%s: %s", attempt, attempts, exc)
 
-        if attempt < attempts:
-            time.sleep(retry_delay_ms / 1000.0)
+            if attempt < attempts:
+                time.sleep(retry_delay_ms / 1000.0)
+    else:
+        logger.warning("OTP SMTP skipped: SMTP credentials are not configured")
 
+    if _send_login_otp_via_brevo_api(email, otp):
+        return True
+
+    if smtp_attempted:
+        logger.warning("OTP send failed via SMTP and Brevo API fallback")
+    else:
+        logger.warning("OTP send failed via Brevo API fallback")
     return False
 
 def _resolve_user_profile(identity, create=False):
@@ -1452,5 +1507,8 @@ def admin_analytics(request):
 @csrf_exempt
 def razorpay_webhook(request):
     return JsonResponse({"status": "Webhook received"})
+
+
+
 
 

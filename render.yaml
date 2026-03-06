@@ -37,6 +37,14 @@ services:
         sync: false
       - key: DEFAULT_FROM_EMAIL
         sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_API_URL
+        value: "https://api.brevo.com/v3/smtp/email"
+      - key: BREVO_API_TIMEOUT
+        value: "10"
+      - key: BREVO_SENDER_NAME
+        value: "Captcha Free Login"
       - key: OTP_EXPIRY_SECONDS
         value: "45"
       - key: OTP_FALLBACK_TO_RESPONSE
@@ -51,4 +59,3 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
-
