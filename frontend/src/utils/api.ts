@@ -69,7 +69,11 @@ export const api = async <T = any>(
 
     return data as T;
   } catch (error: any) {
-    console.error("API Error:", error.message);
-    throw error;
+    const message =
+      error?.name === "TypeError" && /Failed to fetch/i.test(error?.message || "")
+        ? "Unable to reach server. Please check your internet connection and try again."
+        : error?.message || "Request failed";
+    console.error("API Error:", message);
+    throw new Error(message);
   }
 };

@@ -31,6 +31,7 @@ const Auth = () => {
   const [otpChallengeToken, setOtpChallengeToken] = useState('');
   const [otpDestination, setOtpDestination] = useState('');
   const [otpExpiresInSeconds, setOtpExpiresInSeconds] = useState(300);
+  const [fallbackOtp, setFallbackOtp] = useState('');
 
   const [countdown, setCountdown] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -117,6 +118,8 @@ const Auth = () => {
         challengeToken: string;
         otpDestination: string;
         otpExpiresInSeconds: number;
+        otpDelivery?: 'email' | 'in_app';
+        otpFallback?: string;
       }>(
         'login/',
         'POST',
@@ -136,11 +139,19 @@ const Auth = () => {
       setStep('otp');
       setOtpExpiresInSeconds(data.otpExpiresInSeconds || 50);
       setCountdown(data.otpExpiresInSeconds || 50);
+      setFallbackOtp(data.otpDelivery === 'in_app' ? (data.otpFallback || '') : '');
 
-      toast({
-        title: 'OTP Sent',
-        description: `OTP sent to ${data.otpDestination}`,
-      });
+      if (data.otpDelivery === 'in_app' && data.otpFallback) {
+        toast({
+          title: 'OTP Generated',
+          description: `Use this OTP: ${data.otpFallback}`,
+        });
+      } else {
+        toast({
+          title: 'OTP Sent',
+          description: `OTP sent to ${data.otpDestination}`,
+        });
+      }
     } catch (error: any) {
       toast({
         title: 'Login Failed',
@@ -336,6 +347,9 @@ const Auth = () => {
                   <p className="text-sm text-[#617286]">OTP expires in</p>
                   <p className="mt-1 text-3xl font-semibold text-[#113454]">{countdown}s</p>
                   <p className="mt-1 text-sm text-[#617286]">Sent to {otpDestination}</p>
+                  {fallbackOtp && (
+                    <p className="mt-2 text-sm font-semibold text-[#113454]">Use OTP: {fallbackOtp}</p>
+                  )}
                 </div>
                 <Progress
                   value={

@@ -339,10 +339,14 @@ def login_view(request):
     )
 
     otp_sent = _send_login_otp_email(user.email, otp)
-    if not otp_sent:
+    otp_fallback_enabled = bool(getattr(settings, "OTP_FALLBACK_TO_RESPONSE", False))
+    if not otp_sent and not otp_fallback_enabled:
         otp_record.delete()
         _record_attempt(request, status="blocked", username=user.username, email=user.email)
         return JsonResponse({"error": "Unable to send OTP email. Try again shortly."}, status=503)
+
+    otp_delivery = "email" if otp_sent else "in_app"
+    otp_destination = _masked_email(user.email) if otp_sent else "on-screen code"
     challenge_token = signing.dumps(
         {
             "otp_id": otp_record.id,
@@ -351,14 +355,24 @@ def login_view(request):
         },
         salt="auth-otp-challenge",
     )
-    _record_attempt(request, status="otp_sent", username=user.username, email=user.email)
+    _record_attempt(
+        request,
+        status="otp_sent" if otp_sent else "otp_fallback",
+        username=user.username,
+        email=user.email,
+    )
 
-    return JsonResponse({
+    payload = {
         "success": True,
         "challengeToken": challenge_token,
-        "otpDestination": _masked_email(user.email),
+        "otpDestination": otp_destination,
         "otpExpiresInSeconds": 300,
-    })
+        "otpDelivery": otp_delivery,
+    }
+    if not otp_sent:
+        payload["otpFallback"] = otp
+
+    return JsonResponse(payload)
 
 
 @csrf_exempt
