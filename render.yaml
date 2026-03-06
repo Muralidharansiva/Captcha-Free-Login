@@ -22,7 +22,7 @@ services:
       - key: EMAIL_BACKEND
         value: "django.core.mail.backends.smtp.EmailBackend"
       - key: EMAIL_HOST
-        value: "smtp.gmail.com"
+        value: "smtp-relay.brevo.com"
       - key: EMAIL_PORT
         value: "587"
       - key: EMAIL_USE_TLS
@@ -51,3 +51,4 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
+
