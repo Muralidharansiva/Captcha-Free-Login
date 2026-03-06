@@ -7,9 +7,42 @@ import { getAccessToken, logout } from "./auth";
  * - Uses VITE_API_BASE_URL if provided
  * - Otherwise defaults to production Render backend
  */
+const RENDER_BASE_URL = "https://captcha-free-login.onrender.com";
+const RAW_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
+  RENDER_BASE_URL;
+
+const isLocalApiHost = (value: string): boolean => {
+  try {
+    const parsed = new URL(value);
+    return ["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+};
+
+const isHttpApiUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+};
+
+const isLocalFrontend =
+  typeof window !== "undefined" &&
+  ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const isSecureFrontend =
+  typeof window !== "undefined" && window.location.protocol === "https:";
+
+const shouldForceRenderBase =
+  (isLocalApiHost(RAW_BASE_URL) && !isLocalFrontend) ||
+  (isHttpApiUrl(RAW_BASE_URL) && isSecureFrontend);
+
+// Guard against accidentally configured localhost API URL in hosted environments (e.g. Vercel env vars).
 const BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string) ||
-  "https://captcha-free-login.onrender.com";
+  shouldForceRenderBase ? RENDER_BASE_URL : RAW_BASE_URL;
 const NORMALIZED_BASE_URL = BASE_URL.replace(/\/+$/, "");
 export const API_BASE_URL = NORMALIZED_BASE_URL.endsWith("/api")
   ? NORMALIZED_BASE_URL
