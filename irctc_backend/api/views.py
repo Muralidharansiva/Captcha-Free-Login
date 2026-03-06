@@ -14,7 +14,7 @@ from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail, get_connection
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Q, Sum, Min
 from django.http import JsonResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
 try:
@@ -260,12 +260,21 @@ def _send_login_otp_email(email, otp):
     Send login OTP with a bounded SMTP timeout so login requests do not hang.
     Returns True when at least one message is accepted by the backend.
     """
+    smtp_user = str(getattr(settings, "EMAIL_HOST_USER", "") or "").strip()
+    smtp_pass = str(getattr(settings, "EMAIL_HOST_PASSWORD", "") or "").strip()
+
+    # If SMTP credentials are not configured, skip email attempt immediately
+    # and let OTP fallback flow continue without blocking login.
+    if not smtp_user or not smtp_pass:
+        return False
+
     try:
-        connection = get_connection(timeout=getattr(settings, "EMAIL_TIMEOUT", 10))
+        timeout = int(getattr(settings, "EMAIL_TIMEOUT", 5) or 5)
+        connection = get_connection(timeout=max(3, min(timeout, 8)))
         sent_count = send_mail(
             "Your Login OTP",
             f"Your OTP is {otp}",
-            settings.DEFAULT_FROM_EMAIL or "noreply@example.com",
+            settings.DEFAULT_FROM_EMAIL or smtp_user or "noreply@example.com",
             [email],
             fail_silently=False,
             connection=connection,
@@ -623,30 +632,65 @@ def search_trains(request):
         "16721": {"trainName": "Pollachi - Dindigul Passenger", "source": "Pollachi Junction", "destination": "Dindigul Junction", "departureTime": "11:00", "arrivalTime": "14:00", "platformNumber": "5"},
         "16722": {"trainName": "Dindigul - Pudukottai Link Express", "source": "Dindigul Junction", "destination": "Pudukottai", "departureTime": "15:30", "arrivalTime": "17:30", "platformNumber": "6"},
     }
-
     trains = []
     default_journey_date = timezone.localdate() + timedelta(days=1)
+
+    train_numbers = list(train_master.keys())
+
+    # Fetch first available SL/GN record per train in one DB round-trip.
+    earliest_dates = (
+        TrainAvailability.objects
+        .filter(train_number__in=train_numbers, class_type="SL", quota="GN")
+        .values("train_number")
+        .annotate(first_date=Min("journey_date"))
+    )
+
+    first_date_map = {item["train_number"]: item["first_date"] for item in earliest_dates}
+    availability_q = Q()
+    for train_no, first_date in first_date_map.items():
+        availability_q |= Q(train_number=train_no, journey_date=first_date, class_type="SL", quota="GN")
+
+    availability_by_train = {}
+    if availability_q:
+        for availability in TrainAvailability.objects.filter(availability_q):
+            availability_by_train[availability.train_number] = availability
+
+    missing_numbers = [n for n in train_numbers if n not in availability_by_train]
+    if missing_numbers:
+        TrainAvailability.objects.bulk_create(
+            [
+                TrainAvailability(
+                    train_number=train_number,
+                    journey_date=default_journey_date,
+                    class_type="SL",
+                    quota="GN",
+                    available_seats=40,
+                )
+                for train_number in missing_numbers
+            ],
+            ignore_conflicts=True,
+        )
+
+        for availability in TrainAvailability.objects.filter(
+            train_number__in=missing_numbers,
+            class_type="SL",
+            quota="GN",
+        ).order_by("train_number", "journey_date"):
+            if availability.train_number not in availability_by_train:
+                availability_by_train[availability.train_number] = availability
 
     for train_number, details in train_master.items():
         if source_query and source_query not in _norm(details.get("source")):
             continue
         if destination_query and destination_query not in _norm(details.get("destination")):
             continue
-
-        availability = (
-            TrainAvailability.objects
-            .filter(train_number=train_number)
-            .order_by("journey_date")
-            .first()
-        )
-        if not availability:
-            availability = TrainAvailability.objects.create(
-                train_number=train_number,
-                journey_date=default_journey_date,
-                class_type="SL",
-                quota="GN",
-                available_seats=40,
-            )
+        availability = availability_by_train.get(train_number)
+        if availability is None:
+            journey_date_value = default_journey_date
+            available_seats_value = 40
+        else:
+            journey_date_value = availability.journey_date
+            available_seats_value = availability.available_seats
 
         trains.append({
             "id": train_number,
@@ -659,9 +703,9 @@ def search_trains(request):
             "duration": _duration_label(details["departureTime"], details["arrivalTime"]),
             "platformNumber": details["platformNumber"],
             "fare": 250,
-            "availableSeats": availability.available_seats,
-            "date": str(availability.journey_date),
-            "journeyDate": str(availability.journey_date),
+            "availableSeats": available_seats_value,
+            "date": str(journey_date_value),
+            "journeyDate": str(journey_date_value),
         })
 
     return Response({"success": True, "trains": trains})

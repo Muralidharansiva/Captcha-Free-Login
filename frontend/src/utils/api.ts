@@ -44,7 +44,12 @@ export const API_BASE_URL = NORMALIZED_BASE_URL.endsWith("/api")
   ? NORMALIZED_BASE_URL
   : `${NORMALIZED_BASE_URL}/api`;
 
-const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 20000);
+// Keep this generous to handle Render cold starts.
+const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 60000);
+const MAX_GET_RETRIES = Number(import.meta.env.VITE_API_GET_RETRIES || 1);
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const parseResponseBody = async (response: Response): Promise<any> => {
   const contentType = response.headers.get("content-type") || "";
@@ -70,6 +75,7 @@ export const api = async <T = any>(
 ): Promise<T> => {
   const cleanEndpoint = endpoint.startsWith("/") ? endpoint.slice(1) : endpoint;
   const hasBody = body !== undefined && body !== null;
+  const methodUpper = method.toUpperCase();
 
   const headers: HeadersInit = {};
   if (hasBody) {
@@ -83,44 +89,57 @@ export const api = async <T = any>(
     }
   }
 
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let attempt = 0;
+  while (true) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  try {
-    const response = await fetch(`${API_BASE_URL}/${cleanEndpoint}`, {
-      method,
-      headers,
-      body: hasBody ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
+    try {
+      const response = await fetch(`${API_BASE_URL}/${cleanEndpoint}`, {
+        method,
+        headers,
+        body: hasBody ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
 
-    if (response.status === 401) {
-      logout();
-      window.location.href = "/auth";
-      throw new Error("Session expired. Please login again.");
+      if (response.status === 401) {
+        logout();
+        window.location.href = "/auth";
+        throw new Error("Session expired. Please login again.");
+      }
+
+      const data = await parseResponseBody(response);
+
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || "Request failed");
+      }
+
+      return data as T;
+    } catch (error: any) {
+      const isNetworkError =
+        error?.name === "TypeError" && /Failed to fetch/i.test(error?.message || "");
+      const isTimeoutError = error?.name === "AbortError";
+      const canRetry =
+        methodUpper === "GET" &&
+        attempt < MAX_GET_RETRIES &&
+        (isNetworkError || isTimeoutError);
+
+      if (canRetry) {
+        attempt += 1;
+        await sleep(1000 * attempt);
+        continue;
+      }
+
+      const message = isTimeoutError
+        ? "Server is waking up. Please wait a few seconds and try again."
+        : isNetworkError
+          ? "Unable to reach server. Please check your internet connection and try again."
+          : error?.message || "Request failed";
+
+      console.error(`API Error [${methodUpper} ${cleanEndpoint}]:`, message);
+      throw new Error(message);
+    } finally {
+      window.clearTimeout(timeout);
     }
-
-    const data = await parseResponseBody(response);
-
-    if (!response.ok) {
-      throw new Error(data?.error || data?.message || "Request failed");
-    }
-
-    return data as T;
-  } catch (error: any) {
-    const isNetworkError =
-      error?.name === "TypeError" && /Failed to fetch/i.test(error?.message || "");
-    const isTimeoutError = error?.name === "AbortError";
-
-    const message = isTimeoutError
-      ? "Server is taking too long to respond. Please try again in a few seconds."
-      : isNetworkError
-        ? "Unable to reach server. Please check your internet connection and try again."
-        : error?.message || "Request failed";
-
-    console.error(`API Error [${method} ${cleanEndpoint}]:`, message);
-    throw new Error(message);
-  } finally {
-    window.clearTimeout(timeout);
   }
 };
