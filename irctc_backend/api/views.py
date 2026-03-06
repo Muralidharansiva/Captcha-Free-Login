@@ -2,7 +2,7 @@ import json
 import secrets
 import hashlib
 from decimal import Decimal
-from datetime import timedelta
+from datetime import timedelta, date
 from io import BytesIO
 from urllib.parse import quote
 import django.utils.timezone as timezone
@@ -14,6 +14,7 @@ from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail, get_connection
 from django.db import transaction
+from django.db.models import Q, Sum
 from django.http import JsonResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
 try:
@@ -241,6 +242,19 @@ def _masked_email(email):
     return f"{masked_local}@{domain}"
 
 
+def _coerce_journey_date(value):
+    if isinstance(value, date):
+        return value
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
 def _send_login_otp_email(email, otp):
     """
     Send login OTP with a bounded SMTP timeout so login requests do not hang.
@@ -294,6 +308,70 @@ def _get_razorpay_client():
     return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
 
+def _auth_header_token(request):
+    auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+    if not auth_header.startswith("Bearer "):
+        return ""
+    return auth_header.split(" ", 1)[1].strip()
+
+
+def _load_session_payload(request):
+    token = _auth_header_token(request)
+    if not token:
+        return None
+
+    max_age = int(getattr(settings, "SESSION_TOKEN_MAX_AGE_SECONDS", 60 * 60 * 24 * 7))
+    try:
+        return signing.loads(token, salt="auth-session-token", max_age=max_age)
+    except signing.BadSignature:
+        return None
+
+
+def _get_session_user(request):
+    payload = _load_session_payload(request)
+    if not payload:
+        return None, None, Response({"error": "Unauthorized"}, status=401)
+
+    username = str(payload.get("username") or "").strip()
+    email = str(payload.get("email") or "").strip().lower()
+
+    user = User.objects.filter(username=username).first() if username else None
+    if not user and email:
+        user = User.objects.filter(email=email).first()
+
+    if not user or not user.is_active:
+        return None, payload, Response({"error": "Unauthorized"}, status=401)
+
+    if username and user.username != username:
+        return None, payload, Response({"error": "Unauthorized"}, status=401)
+
+    if email and (user.email or "").strip().lower() != email:
+        return None, payload, Response({"error": "Unauthorized"}, status=401)
+
+    return user, payload, None
+
+
+def _require_admin(request):
+    user, payload, error = _get_session_user(request)
+    if error:
+        return None, None, error
+    if not (user.is_staff or user.is_superuser):
+        return None, payload, Response({"error": "Admin access required"}, status=403)
+    return user, payload, None
+
+
+def _identity_matches_session(identity, payload):
+    ident = str(identity or "").strip().lower()
+    if not ident:
+        return False
+
+    session_usernames = {
+        str(payload.get("username") or "").strip().lower(),
+        str(payload.get("email") or "").strip().lower(),
+    }
+    return ident in session_usernames
+
+
 @csrf_exempt
 def login_view(request):
     if request.method != "POST":
@@ -340,7 +418,7 @@ def login_view(request):
     )
 
     otp_sent = _send_login_otp_email(user.email, otp)
-    otp_fallback_enabled = bool(getattr(settings, "OTP_FALLBACK_TO_RESPONSE", False))
+    otp_fallback_enabled = bool(getattr(settings, "OTP_FALLBACK_TO_RESPONSE", True))
     if not otp_sent and not otp_fallback_enabled:
         otp_record.delete()
         _record_attempt(request, status="blocked", username=user.username, email=user.email)
@@ -500,8 +578,35 @@ def verify_email_otp(request):
         },
     })
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 def search_trains(request):
+    _, _, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
+
+
+    def _norm(value):
+        return str(value or "").strip().lower()
+
+    def _duration_label(departure_time, arrival_time):
+        try:
+            dep_h, dep_m = [int(x) for x in str(departure_time).split(":", 1)]
+            arr_h, arr_m = [int(x) for x in str(arrival_time).split(":", 1)]
+            dep_total = dep_h * 60 + dep_m
+            arr_total = arr_h * 60 + arr_m
+            if arr_total < dep_total:
+                arr_total += 24 * 60
+            mins = arr_total - dep_total
+            return f"{mins // 60}h {mins % 60}m"
+        except Exception:
+            return "Duration not available"
+
+    if request.method == "POST":
+        source_query = _norm(request.data.get("source"))
+        destination_query = _norm(request.data.get("destination"))
+    else:
+        source_query = _norm(request.query_params.get("source"))
+        destination_query = _norm(request.query_params.get("destination"))
 
     train_master = {
         "12678": {"trainName": "Kanniyakumari Express", "source": "Chennai Central", "destination": "Kanniyakumari", "departureTime": "17:30", "arrivalTime": "06:00", "platformNumber": "4"},
@@ -523,6 +628,11 @@ def search_trains(request):
     default_journey_date = timezone.localdate() + timedelta(days=1)
 
     for train_number, details in train_master.items():
+        if source_query and source_query not in _norm(details.get("source")):
+            continue
+        if destination_query and destination_query not in _norm(details.get("destination")):
+            continue
+
         availability = (
             TrainAvailability.objects
             .filter(train_number=train_number)
@@ -539,25 +649,33 @@ def search_trains(request):
             )
 
         trains.append({
+            "id": train_number,
             "trainNumber": train_number,
             "trainName": details["trainName"],
             "source": details["source"],
             "destination": details["destination"],
             "departureTime": details["departureTime"],
             "arrivalTime": details["arrivalTime"],
+            "duration": _duration_label(details["departureTime"], details["arrivalTime"]),
             "platformNumber": details["platformNumber"],
             "fare": 250,
             "availableSeats": availability.available_seats,
-            "journeyDate": availability.journey_date,
+            "date": str(availability.journey_date),
+            "journeyDate": str(availability.journey_date),
         })
 
     return Response({"success": True, "trains": trains})
 @api_view(["GET", "POST"])
 def select_train(request):
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
 
     if request.method == "POST":
 
-        identity = request.data.get("email")
+        identity = request.data.get("email") or payload.get("email") or payload.get("username")
+        if not _identity_matches_session(identity, payload):
+            return Response({"error": "Forbidden"}, status=403)
         train = request.data.get("train")
 
         if not identity or not train:
@@ -574,7 +692,9 @@ def select_train(request):
 
     if request.method == "GET":
 
-        identity = request.query_params.get("email")
+        identity = request.query_params.get("email") or payload.get("email") or payload.get("username")
+        if not _identity_matches_session(identity, payload):
+            return Response({"error": "Forbidden"}, status=403)
 
         user_profile = _resolve_user_profile(identity, create=False)
         selected = SelectedTrain.objects.filter(user=user_profile).first()
@@ -588,8 +708,13 @@ def select_train(request):
 
 @api_view(["POST"])
 def save_passengers(request):
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
 
-    identity = request.data.get("email")
+    identity = request.data.get("email") or payload.get("email") or payload.get("username")
+    if not _identity_matches_session(identity, payload):
+        return Response({"error": "Forbidden"}, status=403)
     passengers = request.data.get("passengers", [])
     is_family = bool(request.data.get("isFamily", False))
 
@@ -613,7 +738,13 @@ def save_passengers(request):
     return Response({"success": True})
 @api_view(["GET"])
 def pending_booking(request):
-    identity = request.query_params.get("email")
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
+
+    identity = request.query_params.get("email") or payload.get("email") or payload.get("username")
+    if not _identity_matches_session(identity, payload):
+        return Response({"error": "Forbidden"}, status=403)
 
     user_profile = _resolve_user_profile(identity, create=False)
     selected = SelectedTrain.objects.filter(user=user_profile).first()
@@ -632,9 +763,14 @@ def pending_booking(request):
 @api_view(["POST"])
 @transaction.atomic
 def create_booking(request):
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
 
-    identity = request.data.get("email")
-    journey_date = request.data.get("journeyDate")
+    identity = request.data.get("email") or payload.get("email") or payload.get("username")
+    if not _identity_matches_session(identity, payload):
+        return Response({"error": "Forbidden"}, status=403)
+    journey_date_raw = request.data.get("journeyDate")
     transaction_id = request.data.get("transactionId")
 
     user_profile = _resolve_user_profile(identity, create=False)
@@ -648,6 +784,14 @@ def create_booking(request):
         return Response({"error": "Booking session expired"}, status=400)
 
     train_number = selected.train.get("trainNumber")
+    journey_date = _coerce_journey_date(
+        journey_date_raw
+        or selected.train.get("journeyDate")
+        or selected.train.get("date")
+    )
+    if not journey_date:
+        return Response({"error": "Invalid or missing journey date"}, status=400)
+
     passengers = passenger_session.passengers
     passenger_count = len(passengers)
     is_family = bool(passengers and isinstance(passengers[0], dict) and passengers[0].get("isFamilyBooking"))
@@ -659,7 +803,9 @@ def create_booking(request):
     try:
         availability = TrainAvailability.objects.select_for_update().get(
             train_number=train_number,
-            journey_date=journey_date
+            journey_date=journey_date,
+            class_type="SL",
+            quota="GN",
         )
     except TrainAvailability.DoesNotExist:
         return Response({"error": "Train not available"}, status=404)
@@ -704,7 +850,13 @@ def create_booking(request):
 
 @api_view(["GET"])
 def get_booking_detail(request, booking_id):
-    identity = request.query_params.get("email")
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
+
+    identity = request.query_params.get("email") or payload.get("email") or payload.get("username")
+    if not _identity_matches_session(identity, payload):
+        return Response({"error": "Forbidden"}, status=403)
     user_profile = _resolve_user_profile(identity, create=False)
 
     if not user_profile:
@@ -724,8 +876,13 @@ def get_booking_detail(request, booking_id):
 
 @api_view(["GET"])
 def get_bookings(request):
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
 
-    identity = request.query_params.get("email")
+    identity = request.query_params.get("email") or payload.get("email") or payload.get("username")
+    if not _identity_matches_session(identity, payload):
+        return Response({"error": "Forbidden"}, status=403)
 
     user_profile = _resolve_user_profile(identity, create=False)
 
@@ -744,8 +901,14 @@ def get_bookings(request):
 
 @api_view(["GET"])
 def download_ticket(request):
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
+
     booking_id = request.query_params.get("bookingId")
-    identity = request.query_params.get("email")
+    identity = request.query_params.get("email") or payload.get("email") or payload.get("username")
+    if not _identity_matches_session(identity, payload):
+        return Response({"error": "Forbidden"}, status=403)
     should_download = request.query_params.get("download", "1") == "1"
 
     if not booking_id or not identity:
@@ -932,8 +1095,13 @@ def ttr_verify_ticket(request):
 
 @api_view(["POST"])
 def verify_payment(request):
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
 
-    identity = request.data.get("email")
+    identity = request.data.get("email") or payload.get("email") or payload.get("username")
+    if not _identity_matches_session(identity, payload):
+        return Response({"error": "Forbidden"}, status=403)
     razorpay_payment_id = request.data.get("razorpay_payment_id")
     razorpay_order_id = request.data.get("razorpay_order_id")
     razorpay_signature = request.data.get("razorpay_signature")
@@ -984,10 +1152,20 @@ def check_availability(request):
 @api_view(["POST"])
 @transaction.atomic
 def cancel_booking(request):
+    _, payload, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
 
     pnr = request.data.get("pnr")
+    identity = request.data.get("email") or payload.get("email") or payload.get("username")
+    if not _identity_matches_session(identity, payload):
+        return Response({"error": "Forbidden"}, status=403)
 
-    booking = Booking.objects.filter(pnr=pnr).first()
+    user_profile = _resolve_user_profile(identity, create=False)
+    if not user_profile:
+        return Response({"error": "User not found"}, status=404)
+
+    booking = Booking.objects.filter(pnr=pnr, user=user_profile).first()
 
     if not booking:
         return Response({"error": "Booking not found"}, status=404)
@@ -1024,6 +1202,10 @@ def train_status(request):
 
 @api_view(["POST"])
 def create_razorpay_order(request):
+    _, _, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
+
     try:
         amount = request.data.get("amount")
         receipt = request.data.get("receipt") or f"receipt_{secrets.token_hex(8)}"
@@ -1058,6 +1240,9 @@ def create_razorpay_order(request):
         return Response({"error": str(e)}, status=500)
 @api_view(["GET"])
 def booking_stats(request):
+    _, _, auth_error = _require_admin(request)
+    if auth_error:
+        return auth_error
 
     total = Booking.objects.count()
     confirmed = Booking.objects.filter(status="CONFIRMED").count()
@@ -1070,11 +1255,148 @@ def booking_stats(request):
     })
 @api_view(["POST"])
 def submit_behavior(request):
+    _, _, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
 
     return Response({
         "success": True,
         "message": "Behavior recorded"
     })
+
+
+@api_view(["GET"])
+def admin_session(request):
+    user, _, auth_error = _get_session_user(request)
+    if auth_error:
+        return auth_error
+
+    return Response({
+        "success": True,
+        "isAdmin": bool(user.is_staff or user.is_superuser),
+        "username": user.username,
+        "email": user.email,
+    })
+
+
+@api_view(["GET"])
+def admin_users(request):
+    _, _, auth_error = _require_admin(request)
+    if auth_error:
+        return auth_error
+
+    query = str(request.query_params.get("q") or "").strip()
+    users_qs = User.objects.all().order_by("-date_joined")
+    if query:
+        users_qs = users_qs.filter(Q(username__icontains=query) | Q(email__icontains=query))
+
+    users = []
+    for u in users_qs[:200]:
+        users.append({
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "isActive": u.is_active,
+            "isStaff": u.is_staff,
+            "isSuperuser": u.is_superuser,
+            "dateJoined": u.date_joined,
+            "lastLogin": u.last_login,
+        })
+
+    return Response({"success": True, "users": users})
+
+
+@api_view(["POST"])
+def admin_update_user(request, user_id):
+    admin_user, _, auth_error = _require_admin(request)
+    if auth_error:
+        return auth_error
+
+    target = User.objects.filter(id=user_id).first()
+    if not target:
+        return Response({"error": "User not found"}, status=404)
+
+    if target.id == admin_user.id and request.data.get("isActive") is False:
+        return Response({"error": "You cannot deactivate your own account"}, status=400)
+
+    def _to_bool(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    changed = False
+    if "isActive" in request.data:
+        target.is_active = _to_bool(request.data.get("isActive"))
+        changed = True
+    if "isStaff" in request.data:
+        target.is_staff = _to_bool(request.data.get("isStaff"))
+        changed = True
+
+    if changed:
+        target.save(update_fields=["is_active", "is_staff"])
+
+    return Response({
+        "success": True,
+        "user": {
+            "id": target.id,
+            "username": target.username,
+            "email": target.email,
+            "isActive": target.is_active,
+            "isStaff": target.is_staff,
+            "isSuperuser": target.is_superuser,
+            "dateJoined": target.date_joined,
+            "lastLogin": target.last_login,
+        }
+    })
+
+
+@api_view(["GET"])
+def admin_analytics(request):
+    _, _, auth_error = _require_admin(request)
+    if auth_error:
+        return auth_error
+
+    total_users = User.objects.count()
+    active_users = User.objects.filter(is_active=True).count()
+    staff_users = User.objects.filter(is_staff=True).count()
+
+    total_bookings = Booking.objects.count()
+    confirmed_bookings = Booking.objects.filter(status="CONFIRMED").count()
+    cancelled_bookings = Booking.objects.filter(status="CANCELLED").count()
+
+    revenue_value = Booking.objects.exclude(status="CANCELLED").aggregate(total=Sum("total_fare")).get("total")
+    if revenue_value is None:
+        revenue_value = Decimal("0")
+
+    since = timezone.now() - timedelta(hours=24)
+    login_events = LoginAttempt.objects.filter(timestamp__gte=since)
+    failed_logins = login_events.filter(status__in=["login_failed", "otp_failed", "blocked"]).count()
+
+    return Response({
+        "success": True,
+        "metrics": {
+            "users": {
+                "total": total_users,
+                "active": active_users,
+                "staff": staff_users,
+            },
+            "bookings": {
+                "total": total_bookings,
+                "confirmed": confirmed_bookings,
+                "cancelled": cancelled_bookings,
+            },
+            "revenue": {
+                "total": str(revenue_value),
+            },
+            "security": {
+                "loginAttempts24h": login_events.count(),
+                "failedLogins24h": failed_logins,
+            },
+        },
+    })
+
 @csrf_exempt
 def razorpay_webhook(request):
     return JsonResponse({"status": "Webhook received"})

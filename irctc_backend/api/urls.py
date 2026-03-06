@@ -26,4 +26,10 @@ urlpatterns = [
     path("login/", views.login_view),
     path("verify-email-otp/", views.verify_email_otp),
     path("register/", views.register_view),
+
+    # Admin APIs
+    path("admin/session/", views.admin_session),
+    path("admin/users/", views.admin_users),
+    path("admin/users/<int:user_id>/", views.admin_update_user),
+    path("admin/analytics/", views.admin_analytics),
 ]

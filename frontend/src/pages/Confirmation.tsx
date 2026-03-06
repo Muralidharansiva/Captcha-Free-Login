@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { TicketDisplay } from '@/components/TicketDisplay';
@@ -43,17 +43,17 @@ const Confirmation = () => {
     return user?.username || user?.email || '';
   };
 
-  const buildTicketEndpoint = (download: boolean) => {
-    const base = `${API_BASE_URL}/`;
-    const email = encodeURIComponent(getUserIdentity());
-    const id = encodeURIComponent(bookingId || '');
-    const flag = download ? '1' : '0';
-    return `${base}download-ticket/?bookingId=${id}&email=${email}&download=${flag}`;
-  };
+  const buildTicketEndpoint = useCallback(
+    (download: boolean) => {
+      const base = `${API_BASE_URL}/`;
+      const email = encodeURIComponent(getUserIdentity());
+      const id = encodeURIComponent(bookingId || '');
+      const flag = download ? '1' : '0';
+      return `${base}download-ticket/?bookingId=${id}&email=${email}&download=${flag}`;
+    },
+    [bookingId]
+  );
 
-  // --------------------------------------------------
-  // Fetch booking from backend
-  // --------------------------------------------------
   useEffect(() => {
     const fetchBooking = async () => {
       try {
@@ -95,7 +95,6 @@ const Confirmation = () => {
 
         setBooking(normalizeBooking(data.booking));
         setError(null);
-
       } catch {
         setError('Unable to load ticket right now.');
       } finally {
@@ -106,8 +105,9 @@ const Confirmation = () => {
     fetchBooking();
   }, [bookingId, location.state, navigate]);
 
-  const handleDownloadTicket = async () => {
+  const handleDownloadTicket = useCallback(async () => {
     if (!bookingId) return;
+
     try {
       const token = getAccessToken();
       const response = await fetch(buildTicketEndpoint(true), {
@@ -131,14 +131,14 @@ const Confirmation = () => {
     } catch {
       setError('Unable to download ticket right now.');
     }
-  };
+  }, [bookingId, booking?.pnr, buildTicketEndpoint]);
 
   useEffect(() => {
     if (!booking) return;
     if (searchParams.get('download') === '1') {
       handleDownloadTicket();
     }
-  }, [booking, searchParams, bookingId]);
+  }, [booking, searchParams, handleDownloadTicket]);
 
   if (loading) {
     return (
@@ -198,4 +198,3 @@ const Confirmation = () => {
 };
 
 export default Confirmation;
-

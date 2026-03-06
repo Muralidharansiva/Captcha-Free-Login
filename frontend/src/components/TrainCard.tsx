@@ -27,7 +27,7 @@ export const TrainCard = ({ train, onBook }: TrainCardProps) => {
             </div>
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4" />
-              <span>{train.duration}</span>
+              <span>{train.duration || 'Duration not available'}</span>
             </div>
           </div>
 
@@ -71,3 +71,4 @@ export const TrainCard = ({ train, onBook }: TrainCardProps) => {
     </Card>
   );
 };
+

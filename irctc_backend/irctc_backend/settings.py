@@ -49,7 +49,13 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 allowed_hosts = _split_csv(os.getenv("ALLOWED_HOSTS", ""))
 if not allowed_hosts:
-    allowed_hosts = ["127.0.0.1", "localhost"]
+    allowed_hosts = [
+        "127.0.0.1",
+        "localhost",
+        "testserver",
+        "captcha-free-login.onrender.com",
+        ".onrender.com",
+    ]
 
 render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
 if render_hostname and render_hostname not in allowed_hosts:
@@ -185,3 +191,5 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
     }
 }
+
+SESSION_TOKEN_MAX_AGE_SECONDS = int(os.getenv("SESSION_TOKEN_MAX_AGE_SECONDS", "604800"))

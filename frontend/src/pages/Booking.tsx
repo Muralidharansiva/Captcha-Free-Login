@@ -10,13 +10,14 @@ import { Train, Passenger } from '@/types/booking';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Trash2, ArrowLeft, IndianRupee } from 'lucide-react';
 import { api } from '@/utils/api';
-import { getCurrentUser } from '@/utils/auth';
+import { getCurrentUser, isAuthenticated } from '@/utils/auth';
 
 const Booking = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const [train, setTrain] = useState<Train | null>(null);
+  const [loadingTrain, setLoadingTrain] = useState(true);
   const [passengers, setPassengers] = useState<Passenger[]>([
     { name: '', age: 0, gender: 'Male', berth: 'No Preference' }
   ]);
@@ -24,6 +25,11 @@ const Booking = () => {
 
   useEffect(() => {
     const loadSelectedTrain = async () => {
+      if (!isAuthenticated()) {
+        navigate('/auth');
+        return;
+      }
+
       const user = getCurrentUser();
       const identity = user?.username || user?.email;
       if (!identity) {
@@ -31,23 +37,34 @@ const Booking = () => {
         return;
       }
 
-      const data = await api(
-        `select-train/?email=${encodeURIComponent(identity)}`,
-        'GET',
-        undefined,
-        true
-      );
+      try {
+        const data = await api(
+          `select-train/?email=${encodeURIComponent(identity)}`,
+          'GET',
+          undefined,
+          true
+        );
 
-      if (!data.train) {
+        if (!data.train) {
+          navigate('/search');
+          return;
+        }
+
+        setTrain(data.train);
+      } catch (err: any) {
+        toast({
+          title: 'Unable to load booking',
+          description: err?.message || 'Please choose train again.',
+          variant: 'destructive',
+        });
         navigate('/search');
-        return;
+      } finally {
+        setLoadingTrain(false);
       }
-
-      setTrain(data.train);
     };
 
     loadSelectedTrain();
-  }, [navigate]);
+  }, [navigate, toast]);
 
   const addPassenger = () => {
     if (passengers.length < 6) {
@@ -89,14 +106,30 @@ const Booking = () => {
       }
     }
 
-    await api('save-passengers/', 'POST', {
-      email: identity,
-      passengers,
-      isFamily: isFamilyBooking,
-    }, true);
+    try {
+      await api('save-passengers/', 'POST', {
+        email: identity,
+        passengers,
+        isFamily: isFamilyBooking,
+      }, true);
 
-    navigate('/payment');
+      navigate('/payment');
+    } catch (err: any) {
+      toast({
+        title: 'Unable to continue',
+        description: err?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    }
   };
+
+  if (loadingTrain) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#dfe8f5] px-4">
+        <div className="rounded-2xl bg-white px-6 py-4 text-[#244761] shadow-lg">Loading booking...</div>
+      </div>
+    );
+  }
 
   if (!train) return null;
 

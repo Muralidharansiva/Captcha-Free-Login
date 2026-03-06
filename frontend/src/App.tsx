@@ -11,6 +11,7 @@ import Booking from "./pages/Booking";
 import Payment from "./pages/Payment";
 import Confirmation from "./pages/Confirmation";
 import Dashboard from "./pages/Dashboard";
+import AdminPanel from "./pages/AdminPanel";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
@@ -22,11 +23,9 @@ const App = () => {
       <TooltipProvider>
         <BrowserRouter>
           <Routes>
-            {/* Public Routes */}
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
 
-            {/* Protected Routes */}
             <Route
               path="/search"
               element={
@@ -81,11 +80,18 @@ const App = () => {
               }
             />
 
-            {/* Fallback */}
+            <Route
+              path="/admin-panel"
+              element={
+                <ProtectedRoute>
+                  <AdminPanel />
+                </ProtectedRoute>
+              }
+            />
+
             <Route path="*" element={<NotFound />} />
           </Routes>
 
-          {/* Global UI */}
           <Toaster />
           <Sonner />
         </BrowserRouter>

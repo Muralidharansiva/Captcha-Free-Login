@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,16 +7,52 @@ import { TrainCard } from '@/components/TrainCard';
 import { Train } from '@/types/booking';
 import { isAuthenticated, logout, getCurrentUser } from '@/utils/auth';
 import { api } from '@/utils/api';
-import { Search as SearchIcon, LogOut, User, Ticket } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { Search as SearchIcon, LogOut, User, Ticket, RotateCcw, Shield } from 'lucide-react';
 
 const Search = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [source, setSource] = useState('');
   const [destination, setDestination] = useState('');
+  const [allTrains, setAllTrains] = useState<Train[]>([]);
   const [filteredTrains, setFilteredTrains] = useState<Train[]>([]);
   const [showResults, setShowResults] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [bookingTrainNumber, setBookingTrainNumber] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const user = getCurrentUser();
   const userIdentity = user?.username || user?.email || '';
+
+  const normalize = (value: string) => value.trim().toLowerCase();
+
+  const checkAdminSession = useCallback(async () => {
+    try {
+      const data = await api<{ isAdmin?: boolean }>('admin/session/', 'GET', undefined, true);
+      setIsAdmin(Boolean(data?.isAdmin));
+    } catch {
+      setIsAdmin(false);
+    }
+  }, []);
+
+  const loadAllTrains = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api<{ trains: Train[] }>('search-trains/', 'GET', undefined, true);
+      const trains = data.trains || [];
+      setAllTrains(trains);
+      setFilteredTrains(trains);
+      setShowResults(false);
+    } catch (err: any) {
+      toast({
+        title: 'Unable to load trains',
+        description: err?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -25,57 +61,71 @@ const Search = () => {
     }
 
     loadAllTrains();
-  }, [navigate]);
+    checkAdminSession();
+  }, [navigate, loadAllTrains, checkAdminSession]);
 
-  const loadAllTrains = async () => {
-    try {
-      const data = await api<{ trains: Train[] }>(
-        'search-trains/',
-        'GET',
-        undefined,
-        true
-      );
-
-      setFilteredTrains(data.trains || []);
-    } catch {
-      navigate('/auth');
-    }
-  };
-
-  const handleSearch = async (e: React.FormEvent) => {
+  const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!source || !destination) return;
+    const sourceQuery = normalize(source);
+    const destinationQuery = normalize(destination);
 
-    try {
-      const data = await api<{ trains: Train[] }>(
-        'search-trains/',
-        'POST',
-        { source, destination },
-        true
-      );
+    if (!sourceQuery || !destinationQuery) {
+      toast({
+        title: 'Missing fields',
+        description: 'Enter both source and destination.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
-      setFilteredTrains(data.trains || []);
-      setShowResults(true);
-    } catch (err) {
-      console.error(err);
+    const matches = allTrains.filter((train) => {
+      const trainSource = normalize(train.source || '');
+      const trainDestination = normalize(train.destination || '');
+      return trainSource.includes(sourceQuery) && trainDestination.includes(destinationQuery);
+    });
+
+    setFilteredTrains(matches);
+    setShowResults(true);
+
+    if (matches.length === 0) {
+      toast({
+        title: 'No trains found',
+        description: 'Try different station names.',
+      });
     }
   };
+
+  const handleReset = () => {
+    setSource('');
+    setDestination('');
+    setFilteredTrains(allTrains);
+    setShowResults(false);
+  };
+
   const handleBook = async (train: Train) => {
-    const user = getCurrentUser();
-    const identity = user?.username || user?.email;
+    const currentUser = getCurrentUser();
+    const identity = currentUser?.username || currentUser?.email;
     if (!identity) {
       navigate('/auth');
       return;
     }
 
-    await api('select-train/', 'POST', {
-      email: identity,
-      train
-    }, true);
-
-    navigate('/booking');
+    try {
+      setBookingTrainNumber(train.trainNumber);
+      await api('select-train/', 'POST', { email: identity, train }, true);
+      navigate('/booking');
+    } catch (err: any) {
+      toast({
+        title: 'Unable to continue',
+        description: err?.message || 'Could not select train. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setBookingTrainNumber(null);
+    }
   };
+
   const handleLogout = () => {
     logout();
     navigate('/auth');
@@ -90,15 +140,25 @@ const Search = () => {
               <Ticket className="h-8 w-8 text-white" />
               <h1 className="text-2xl font-bold tracking-wide">KITS RailBook</h1>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
               <Button
                 variant="ghost"
-                className="rounded-full text-white hover:bg-white/15"
+                className="max-w-full rounded-full text-white hover:bg-white/15 sm:max-w-[280px]"
                 onClick={() => navigate('/profile')}
               >
-                <User className="mr-2 h-4 w-4" />
-                {userIdentity}
+                <User className="mr-2 h-4 w-4 shrink-0" />
+                <span className="truncate">{userIdentity}</span>
               </Button>
+              {isAdmin && (
+                <Button
+                  variant="ghost"
+                  className="rounded-full text-white hover:bg-white/15"
+                  onClick={() => navigate('/admin-panel')}
+                >
+                  <Shield className="mr-2 h-4 w-4" />
+                  Admin
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 className="rounded-full text-white hover:bg-white/15"
@@ -118,8 +178,8 @@ const Search = () => {
             <h2 className="mb-8 text-center text-3xl font-bold text-white">Search Trains</h2>
 
             <form onSubmit={handleSearch} className="rounded-2xl border border-white/25 bg-white/95 p-5 shadow-2xl backdrop-blur sm:p-6">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="space-y-1.5">
+              <div className="grid gap-4 lg:grid-cols-4">
+                <div className="space-y-1.5 lg:col-span-1">
                   <Label htmlFor="source" className="text-[#617286]">From</Label>
                   <Input
                     id="source"
@@ -131,7 +191,7 @@ const Search = () => {
                   />
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 lg:col-span-1">
                   <Label htmlFor="destination" className="text-[#617286]">To</Label>
                   <Input
                     id="destination"
@@ -143,10 +203,23 @@ const Search = () => {
                   />
                 </div>
 
-                <div className="flex items-end">
-                  <Button type="submit" className="h-12 w-full rounded-full bg-[#ec933a] text-white hover:bg-[#e3872a]" size="lg">
+                <div className="flex items-end lg:col-span-1">
+                  <Button type="submit" className="h-12 w-full rounded-full bg-[#ec933a] text-white hover:bg-[#e3872a]" size="lg" disabled={loading}>
                     <SearchIcon className="mr-2 h-4 w-4" />
                     Search Trains
+                  </Button>
+                </div>
+
+                <div className="flex items-end lg:col-span-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleReset}
+                    className="h-12 w-full rounded-full border-[#d8e2ef]"
+                    disabled={loading}
+                  >
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Show All
                   </Button>
                 </div>
               </div>
@@ -162,14 +235,20 @@ const Search = () => {
           </h3>
         </div>
 
-        {filteredTrains.length === 0 ? (
+        {loading ? (
+          <div className="rounded-2xl bg-white py-14 text-center shadow-sm">
+            <p className="text-[#617286]">Loading trains...</p>
+          </div>
+        ) : filteredTrains.length === 0 ? (
           <div className="rounded-2xl bg-white py-14 text-center shadow-sm">
             <p className="text-[#617286]">No trains found</p>
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredTrains.map(train => (
-              <TrainCard key={train.trainNumber} train={train} onBook={handleBook} />
+            {filteredTrains.map((train) => (
+              <div key={train.trainNumber} className={bookingTrainNumber === train.trainNumber ? 'opacity-70' : ''}>
+                <TrainCard train={train} onBook={handleBook} />
+              </div>
             ))}
           </div>
         )}

@@ -1,5 +1,3 @@
-// src/utils/api.ts
-
 import { getAccessToken, logout } from "./auth";
 
 /**
@@ -40,13 +38,26 @@ const shouldForceRenderBase =
   (isLocalApiHost(RAW_BASE_URL) && !isLocalFrontend) ||
   (isHttpApiUrl(RAW_BASE_URL) && isSecureFrontend);
 
-// Guard against accidentally configured localhost API URL in hosted environments (e.g. Vercel env vars).
-const BASE_URL =
-  shouldForceRenderBase ? RENDER_BASE_URL : RAW_BASE_URL;
+const BASE_URL = shouldForceRenderBase ? RENDER_BASE_URL : RAW_BASE_URL;
 const NORMALIZED_BASE_URL = BASE_URL.replace(/\/+$/, "");
 export const API_BASE_URL = NORMALIZED_BASE_URL.endsWith("/api")
   ? NORMALIZED_BASE_URL
   : `${NORMALIZED_BASE_URL}/api`;
+
+const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 20000);
+
+const parseResponseBody = async (response: Response): Promise<any> => {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    return null;
+  }
+
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Generic API helper
@@ -57,44 +68,39 @@ export const api = async <T = any>(
   body?: any,
   authRequired: boolean = false
 ): Promise<T> => {
-  try {
-    // Ensure endpoint doesn't start with a slash
-    const cleanEndpoint = endpoint.startsWith("/")
-      ? endpoint.slice(1)
-      : endpoint;
+  const cleanEndpoint = endpoint.startsWith("/") ? endpoint.slice(1) : endpoint;
+  const hasBody = body !== undefined && body !== null;
 
-    const headers: HeadersInit = {
-      "Content-Type": "application/json",
-    };
+  const headers: HeadersInit = {};
+  if (hasBody) {
+    headers["Content-Type"] = "application/json";
+  }
 
-    // Attach JWT token if required
-    if (authRequired) {
-      const token = getAccessToken();
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
+  if (authRequired) {
+    const token = getAccessToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
     }
+  }
 
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
     const response = await fetch(`${API_BASE_URL}/${cleanEndpoint}`, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      body: hasBody ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
     });
 
-    // Handle expired token
     if (response.status === 401) {
       logout();
       window.location.href = "/auth";
-      throw new Error("Session expired");
+      throw new Error("Session expired. Please login again.");
     }
 
-    // Try parsing JSON safely
-    let data: any = null;
-    try {
-      data = await response.json();
-    } catch {
-      data = null;
-    }
+    const data = await parseResponseBody(response);
 
     if (!response.ok) {
       throw new Error(data?.error || data?.message || "Request failed");
@@ -102,11 +108,19 @@ export const api = async <T = any>(
 
     return data as T;
   } catch (error: any) {
-    const message =
-      error?.name === "TypeError" && /Failed to fetch/i.test(error?.message || "")
+    const isNetworkError =
+      error?.name === "TypeError" && /Failed to fetch/i.test(error?.message || "");
+    const isTimeoutError = error?.name === "AbortError";
+
+    const message = isTimeoutError
+      ? "Server is taking too long to respond. Please try again in a few seconds."
+      : isNetworkError
         ? "Unable to reach server. Please check your internet connection and try again."
         : error?.message || "Request failed";
-    console.error("API Error:", message);
+
+    console.error(`API Error [${method} ${cleanEndpoint}]:`, message);
     throw new Error(message);
+  } finally {
+    window.clearTimeout(timeout);
   }
 };

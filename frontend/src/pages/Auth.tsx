@@ -144,8 +144,8 @@ const Auth = () => {
       setOtpChallengeToken(data.challengeToken);
       setOtpDestination(data.otpDestination);
       setStep('otp');
-      setOtpExpiresInSeconds(data.otpExpiresInSeconds || 50);
-      setCountdown(data.otpExpiresInSeconds || 50);
+      setOtpExpiresInSeconds(data.otpExpiresInSeconds || 300);
+      setCountdown(data.otpExpiresInSeconds || 300);
       setFallbackOtp(data.otpDelivery === 'in_app' ? (data.otpFallback || '') : '');
 
       if (data.otpDelivery === 'in_app' && data.otpFallback) {
@@ -339,6 +339,7 @@ const Auth = () => {
                     <Button
                       type="submit"
                       className="h-12 w-full rounded-full bg-[#ec933a] text-white hover:bg-[#e3872a]"
+                      disabled={loading}
                     >
                       {loading ? 'Creating...' : 'Register'}
                     </Button>

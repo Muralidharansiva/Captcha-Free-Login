@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { isAuthenticated, getCurrentUser } from '@/utils/auth';
 import { api } from '@/utils/api';
+import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, CreditCard, IndianRupee, ShieldCheck } from 'lucide-react';
 
 declare global {
@@ -16,6 +17,7 @@ declare global {
 
 const Payment = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
 
   const [bookingData, setBookingData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -27,29 +29,37 @@ const Payment = () => {
   const [gatewayReady, setGatewayReady] = useState(false);
   const userIdentity = getCurrentUser()?.username || getCurrentUser()?.email || '';
 
-  const getJourneyDate = () =>
-    bookingData?.train?.journeyDate ||
-    bookingData?.train?.journey_date ||
-    bookingData?.journeyDate ||
-    bookingData?.journey_date;
 
-  const finalizeBooking = async (transactionId: string) => {
-    await api(
-      'create-booking/',
-      'POST',
-      {
-        email: userIdentity,
-        trainNumber: bookingData.train.trainNumber,
-        passengers: bookingData.passengers,
-        journeyDate: getJourneyDate(),
-        transactionId,
-      },
-      true
-    );
-    navigate('/dashboard');
-  };
+  const finalizeBooking = useCallback(
+    async (transactionId: string) => {
+      await api(
+        'create-booking/',
+        'POST',
+        {
+          email: userIdentity,
+          trainNumber: bookingData.train.trainNumber,
+          passengers: bookingData.passengers,
+          journeyDate:
+            bookingData?.train?.journeyDate ||
+            bookingData?.train?.journey_date ||
+            bookingData?.train?.date ||
+            bookingData?.journeyDate ||
+            bookingData?.journey_date,
+          transactionId,
+        },
+        true
+      );
 
-  const ensureRazorpayLoaded = async (): Promise<boolean> => {
+      toast({
+        title: 'Booking Confirmed',
+        description: 'Your ticket has been booked successfully.',
+      });
+      navigate('/dashboard');
+    },
+    [bookingData, userIdentity, navigate, toast]
+  );
+
+  const ensureRazorpayLoaded = useCallback(async (): Promise<boolean> => {
     if (window.Razorpay) {
       setGatewayReady(true);
       return true;
@@ -86,19 +96,9 @@ const Payment = () => {
     const ok = loaded && !!window.Razorpay;
     setGatewayReady(ok);
     return ok;
-  };
+  }, []);
 
-  useEffect(() => {
-    if (!isAuthenticated()) {
-      navigate('/auth');
-      return;
-    }
-
-    ensureRazorpayLoaded();
-    loadPendingBooking();
-  }, [navigate]);
-
-  const loadPendingBooking = async () => {
+  const loadPendingBooking = useCallback(async () => {
     try {
       if (!userIdentity) {
         navigate('/auth');
@@ -113,54 +113,103 @@ const Payment = () => {
       );
 
       setBookingData(data);
-    } catch {
+    } catch (err: any) {
+      toast({
+        title: 'Booking session not found',
+        description: err?.message || 'Please select your train again.',
+        variant: 'destructive',
+      });
       navigate('/search');
     }
+  }, [userIdentity, navigate, toast]);
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      navigate('/auth');
+      return;
+    }
+
+    ensureRazorpayLoaded();
+    loadPendingBooking();
+  }, [navigate, ensureRazorpayLoaded, loadPendingBooking]);
+
+  const validatePaymentForm = (): boolean => {
+    if (cardNumber.length !== 16) {
+      toast({
+        title: 'Invalid card number',
+        description: 'Card number must be 16 digits.',
+        variant: 'destructive',
+      });
+      return false;
+    }
+
+    if (!cardName || !expiryDate || !cvv) {
+      toast({
+        title: 'Missing payment details',
+        description: 'Fill all payment fields before continuing.',
+        variant: 'destructive',
+      });
+      return false;
+    }
+
+    if (!/^\d{2}\/\d{2}$/.test(expiryDate) && !/^\d{2}\/\d{4}$/.test(expiryDate)) {
+      toast({
+        title: 'Invalid expiry date',
+        description: 'Use MM/YY or MM/YYYY format.',
+        variant: 'destructive',
+      });
+      return false;
+    }
+
+    if (cvv.length !== 3) {
+      toast({
+        title: 'Invalid CVV',
+        description: 'CVV must be 3 digits.',
+        variant: 'destructive',
+      });
+      return false;
+    }
+
+    if (!bookingData?.totalFare) {
+      toast({
+        title: 'Invalid booking session',
+        description: 'Please retry your booking flow.',
+        variant: 'destructive',
+      });
+      navigate('/booking');
+      return false;
+    }
+
+    if (!userIdentity) {
+      toast({
+        title: 'Session expired',
+        description: 'Please login again.',
+        variant: 'destructive',
+      });
+      navigate('/auth');
+      return false;
+    }
+
+    return true;
   };
 
   const handlePayment = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (cardNumber.length !== 16) {
-      alert('Card number must be 16 digits');
-      return;
-    }
-
-    if (!cardName || !expiryDate || !cvv) {
-      alert('Fill all payment details');
-      return;
-    }
-    if (!/^\d{2}\/\d{2}$/.test(expiryDate) && !/^\d{2}\/\d{4}$/.test(expiryDate)) {
-      alert('Expiry must be MM/YY or MM/YYYY');
-      return;
-    }
-    if (cvv.length !== 3) {
-      alert('CVV must be 3 digits');
-      return;
-    }
-    if (!bookingData?.totalFare) {
-      alert('Invalid booking session. Please retry.');
-      navigate('/booking');
-      return;
-    }
-    const hasGateway = await ensureRazorpayLoaded();
-    if (!userIdentity) {
-      alert('Session expired. Please login again.');
-      navigate('/auth');
+    if (!validatePaymentForm()) {
       return;
     }
 
     setLoading(true);
 
     try {
+      const hasGateway = await ensureRazorpayLoaded();
+
       if (!hasGateway) {
-        const proceedOffline = window.confirm(
-          'Razorpay checkout is unavailable in your current environment. Continue with local test payment mode?'
-        );
-        if (!proceedOffline) {
-          setLoading(false);
-          return;
-        }
+        toast({
+          title: 'Gateway unavailable',
+          description: 'Using fallback payment mode for this booking.',
+        });
         await finalizeBooking(`OFFLINE-${Date.now()}`);
         return;
       }
@@ -183,7 +232,7 @@ const Payment = () => {
         name: 'IRCTC RailBook',
         description: 'Train Ticket Booking',
         order_id: order.order_id,
-        handler: async function (response: any) {
+        handler: async (response: any) => {
           try {
             await api(
               'verify-payment/',
@@ -197,28 +246,24 @@ const Payment = () => {
               true
             );
 
-            await api(
-              'create-booking/',
-              'POST',
-              {
-                email: userIdentity,
-                trainNumber: bookingData.train.trainNumber,
-                passengers: bookingData.passengers,
-                journeyDate: getJourneyDate(),
-                transactionId: response.razorpay_payment_id,
-              },
-              true
-            );
-
-            navigate('/dashboard');
+            await finalizeBooking(response.razorpay_payment_id);
           } catch (err: any) {
-            alert(err?.message || 'Payment verification failed');
+            if (/razorpay is not configured/i.test(err?.message || '')) {
+              await finalizeBooking(`OFFLINE-${Date.now()}`);
+              return;
+            }
+
+            toast({
+              title: 'Payment verification failed',
+              description: err?.message || 'Please try again.',
+              variant: 'destructive',
+            });
           } finally {
             setLoading(false);
           }
         },
         modal: {
-          ondismiss: function () {
+          ondismiss: () => {
             setLoading(false);
           },
         },
@@ -226,27 +271,42 @@ const Payment = () => {
           name: cardName,
           email: userIdentity,
         },
-        theme: { color: '#1e3a8a' }
+        theme: { color: '#1e3a8a' },
       };
 
       const rzp = new window.Razorpay(options);
-      rzp.on('payment.failed', function (response: any) {
+      rzp.on('payment.failed', (response: any) => {
         const reason = response?.error?.description || 'Payment failed';
-        alert(reason);
+        toast({
+          title: 'Payment failed',
+          description: reason,
+          variant: 'destructive',
+        });
         setLoading(false);
       });
       rzp.open();
-
     } catch (err: any) {
       if (/razorpay is not configured/i.test(err?.message || '')) {
         try {
+          toast({
+            title: 'Gateway not configured',
+            description: 'Using fallback payment mode for this booking.',
+          });
           await finalizeBooking(`OFFLINE-${Date.now()}`);
           return;
         } catch (offlineErr: any) {
-          alert(offlineErr?.message || 'Fallback payment failed');
+          toast({
+            title: 'Fallback failed',
+            description: offlineErr?.message || 'Fallback payment failed',
+            variant: 'destructive',
+          });
         }
       } else {
-        alert(err?.message || 'Payment failed');
+        toast({
+          title: 'Payment failed',
+          description: err?.message || 'Payment failed',
+          variant: 'destructive',
+        });
       }
       setLoading(false);
     }
@@ -337,7 +397,7 @@ const Payment = () => {
             </Button>
             {!gatewayReady && (
               <p className="text-center text-xs text-[#8a4b00]">
-                Live gateway loading failed. Local test payment fallback will be used if needed.
+                Live gateway loading failed. Fallback mode will be used automatically.
               </p>
             )}
           </form>
@@ -346,5 +406,5 @@ const Payment = () => {
     </div>
   );
 };
-export default Payment;
 
+export default Payment;
