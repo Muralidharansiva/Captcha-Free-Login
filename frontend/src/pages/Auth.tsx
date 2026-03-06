@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -34,6 +34,7 @@ const Auth = () => {
 
   const [countdown, setCountdown] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [resendingOtp, setResendingOtp] = useState(false);
   const [honeypot, setHoneypot] = useState('');
 
   useEffect(() => {
@@ -59,6 +60,43 @@ const Auth = () => {
       return () => clearTimeout(timer);
     }
   }, [countdown]);
+
+  const requestOtpChallenge = async (userValue: string, passValue: string) => {
+    const tracker = trackerRef.current;
+    if (!tracker) {
+      throw new Error('Security tracker not ready. Please try again.');
+    }
+
+    const behavior = tracker.getPayload();
+    const device = getDeviceFingerprint();
+    const humanScore = calculateHumanScore(behavior, device);
+
+    const data = await api<{
+      challengeToken: string;
+      otpDestination: string;
+      otpExpiresInSeconds: number;
+    }>(
+      'login/',
+      'POST',
+      {
+        username: userValue,
+        password: passValue,
+        honeypot,
+        humanScore,
+        behavior,
+        device,
+      },
+      false
+    );
+
+    setOtpChallengeToken(data.challengeToken);
+    setOtpDestination(data.otpDestination);
+    setStep('otp');
+    setOtpExpiresInSeconds(data.otpExpiresInSeconds || 45);
+    setCountdown(data.otpExpiresInSeconds || 45);
+
+    return data;
+  };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,37 +150,8 @@ const Auth = () => {
     setLoading(true);
 
     try {
-      const tracker = trackerRef.current;
-      if (!tracker) return;
-
-      const behavior = tracker.getPayload();
-      const device = getDeviceFingerprint();
-      const humanScore = calculateHumanScore(behavior, device);
-
-      const data = await api<{
-        challengeToken: string;
-        otpDestination: string;
-        otpExpiresInSeconds: number;
-      }>(
-        'login/',
-        'POST',
-        {
-          username,
-          password,
-          honeypot,
-          humanScore,
-          behavior,
-          device,
-        },
-        false
-      );
-
-      setOtpChallengeToken(data.challengeToken);
-      setOtpDestination(data.otpDestination);
-      setStep('otp');
-      setOtpExpiresInSeconds(data.otpExpiresInSeconds || 45);
-      setCountdown(data.otpExpiresInSeconds || 45);
-
+      const data = await requestOtpChallenge(username, password);
+      setResendingOtp(false);
       toast({
         title: 'OTP Sent',
         description: `OTP sent to ${data.otpDestination}`,
@@ -155,6 +164,29 @@ const Auth = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResendOTP = async () => {
+    if (countdown > 0 || resendingOtp || loading) {
+      return;
+    }
+
+    setResendingOtp(true);
+    try {
+      const data = await requestOtpChallenge(username, password);
+      toast({
+        title: 'OTP Resent',
+        description: `A new OTP was sent to ${data.otpDestination}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Resend failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setResendingOtp(false);
     }
   };
 
@@ -353,6 +385,22 @@ const Auth = () => {
                   className="h-2 bg-[#d8e4f5]"
                 />
                 <OTPInput onComplete={handleOTPVerify} />
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-full"
+                    disabled={loading || resendingOtp || countdown > 0}
+                    onClick={handleResendOTP}
+                  >
+                    {resendingOtp
+                      ? 'Resending OTP...'
+                      : countdown > 0
+                        ? `Resend OTP in ${countdown}s`
+                        : 'Resend OTP'}
+                  </Button>
+                  <p className="text-xs text-[#72859a]">OTP is sent only to your registered email address.</p>
+                </div>
               </div>
             )}
           </Card>

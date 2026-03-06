@@ -19,3 +19,35 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: EMAIL_BACKEND
+        value: "django.core.mail.backends.smtp.EmailBackend"
+      - key: EMAIL_HOST
+        value: "smtp.gmail.com"
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "True"
+      - key: EMAIL_USE_SSL
+        value: "False"
+      - key: EMAIL_TIMEOUT
+        value: "8"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
+      - key: OTP_EXPIRY_SECONDS
+        value: "45"
+      - key: OTP_FALLBACK_TO_RESPONSE
+        value: "False"
+      - key: OTP_EMAIL_RETRY_COUNT
+        value: "2"
+      - key: OTP_EMAIL_RETRY_DELAY_MS
+        value: "600"
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false

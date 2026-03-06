@@ -1,7 +1,7 @@
 // src/utils/auth.ts
 
-const ACCESS_TOKEN_KEY = "access_token";
-const USER_KEY = "auth_user";
+const ACCESS_TOKEN_KEY = 'access_token';
+const USER_KEY = 'auth_user';
 
 export const setAccessToken = (token: string, user: any) => {
   localStorage.setItem(ACCESS_TOKEN_KEY, token);
@@ -23,5 +23,14 @@ export const isAuthenticated = (): boolean => {
 
 export const getCurrentUser = () => {
   const user = localStorage.getItem(USER_KEY);
-  return user ? JSON.parse(user) : null;
+  if (!user) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(user);
+  } catch {
+    localStorage.removeItem(USER_KEY);
+    return null;
+  }
 };

@@ -1,6 +1,8 @@
-﻿import json
+import json
 import secrets
 import hashlib
+import logging
+import time
 from decimal import Decimal
 from datetime import timedelta, date
 from io import BytesIO
@@ -35,6 +37,8 @@ from .models import (
 )
 from .serializers import BookingSerializer
 from .utils import generate_seat_details, generate_pnr, validate_passenger_mix
+
+logger = logging.getLogger(__name__)
 
 
 def _simple_pdf_from_lines(lines):
@@ -257,32 +261,41 @@ def _coerce_journey_date(value):
 
 def _send_login_otp_email(email, otp):
     """
-    Send login OTP with a bounded SMTP timeout so login requests do not hang.
-    Returns True when at least one message is accepted by the backend.
+    Send login OTP with bounded timeout + retry so occasional SMTP blips
+    do not break login for valid users.
+    Returns True only when at least one message is accepted.
     """
     smtp_user = str(getattr(settings, "EMAIL_HOST_USER", "") or "").strip()
     smtp_pass = str(getattr(settings, "EMAIL_HOST_PASSWORD", "") or "").strip()
 
-    # If SMTP credentials are not configured, skip email attempt immediately
-    # and let OTP fallback flow continue without blocking login.
     if not smtp_user or not smtp_pass:
+        logger.warning("OTP email skipped: SMTP credentials are not configured")
         return False
 
-    try:
-        timeout = int(getattr(settings, "EMAIL_TIMEOUT", 5) or 5)
-        connection = get_connection(timeout=max(3, min(timeout, 8)))
-        sent_count = send_mail(
-            "Your Login OTP",
-            f"Your OTP is {otp}",
-            settings.DEFAULT_FROM_EMAIL or smtp_user or "noreply@example.com",
-            [email],
-            fail_silently=False,
-            connection=connection,
-        )
-        return sent_count > 0
-    except Exception:
-        return False
+    timeout = int(getattr(settings, "EMAIL_TIMEOUT", 8) or 8)
+    attempts = max(1, int(getattr(settings, "OTP_EMAIL_RETRY_COUNT", 2) or 2))
+    retry_delay_ms = max(100, int(getattr(settings, "OTP_EMAIL_RETRY_DELAY_MS", 600) or 600))
 
+    for attempt in range(1, attempts + 1):
+        try:
+            connection = get_connection(timeout=max(5, min(timeout, 15)))
+            sent_count = send_mail(
+                "Your Login OTP",
+                f"Your OTP is {otp}",
+                settings.DEFAULT_FROM_EMAIL or smtp_user or "noreply@example.com",
+                [email],
+                fail_silently=False,
+                connection=connection,
+            )
+            if sent_count > 0:
+                return True
+        except Exception as exc:
+            logger.warning("OTP email send failed on attempt %s/%s: %s", attempt, attempts, exc)
+
+        if attempt < attempts:
+            time.sleep(retry_delay_ms / 1000.0)
+
+    return False
 
 def _resolve_user_profile(identity, create=False):
     identity = (identity or "").strip()
@@ -1439,4 +1452,5 @@ def admin_analytics(request):
 @csrf_exempt
 def razorpay_webhook(request):
     return JsonResponse({"status": "Webhook received"})
+
 

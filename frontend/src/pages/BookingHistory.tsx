@@ -4,8 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { API_BASE_URL } from '@/utils/api';
-import { getAccessToken } from '@/utils/auth';
+import { api } from '@/utils/api';
+import { getCurrentUser, isAuthenticated } from '@/utils/auth';
 
 import { Calendar, Ticket, MapPin, IndianRupee } from 'lucide-react';
 
@@ -36,26 +36,30 @@ const BookingHistory = () => {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ----------------------------------------------------
-  // Fetch from backend -> /api/bookings/
-  // ----------------------------------------------------
   useEffect(() => {
     const fetchBookings = async () => {
       try {
-        const token = getAccessToken();
-        if (!token) throw new Error('Not authenticated');
+        if (!isAuthenticated()) {
+          navigate('/auth');
+          return;
+        }
 
-        const res = await fetch(`${API_BASE_URL}/bookings/`, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
+        const user = getCurrentUser();
+        const identity = user?.username || user?.email || '';
 
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || 'Failed to fetch bookings');
+        const endpoint = identity
+          ? `bookings/?email=${encodeURIComponent(identity)}`
+          : 'bookings/';
+
+        const data = await api<{ success: boolean; bookings: Booking[] }>(
+          endpoint,
+          'GET',
+          undefined,
+          true
+        );
+
+        if (!data?.success) {
+          throw new Error('Failed to fetch bookings');
         }
 
         setBookings(data.bookings || []);
@@ -142,4 +146,3 @@ const BookingHistory = () => {
 };
 
 export default BookingHistory;
-

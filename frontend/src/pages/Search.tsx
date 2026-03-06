@@ -19,6 +19,7 @@ const Search = () => {
   const [filteredTrains, setFilteredTrains] = useState<Train[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [bookingTrainNumber, setBookingTrainNumber] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const user = getCurrentUser();
@@ -43,10 +44,13 @@ const Search = () => {
       setAllTrains(trains);
       setFilteredTrains(trains);
       setShowResults(false);
+      setLoadError(null);
     } catch (err: any) {
+      const message = err?.message || 'Please try again.';
+      setLoadError(message);
       toast({
         title: 'Unable to load trains',
-        description: err?.message || 'Please try again.',
+        description: message,
         variant: 'destructive',
       });
     } finally {
@@ -64,7 +68,7 @@ const Search = () => {
     checkAdminSession();
   }, [navigate, loadAllTrains, checkAdminSession]);
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const sourceQuery = normalize(source);
@@ -79,20 +83,45 @@ const Search = () => {
       return;
     }
 
-    const matches = allTrains.filter((train) => {
-      const trainSource = normalize(train.source || '');
-      const trainDestination = normalize(train.destination || '');
-      return trainSource.includes(sourceQuery) && trainDestination.includes(destinationQuery);
-    });
+    setLoading(true);
+    try {
+      const data = await api<{ trains: Train[] }>(
+        `search-trains/?source=${encodeURIComponent(sourceQuery)}&destination=${encodeURIComponent(destinationQuery)}`,
+        'GET',
+        undefined,
+        true
+      );
+      const matches = data.trains || [];
+      setFilteredTrains(matches);
+      setShowResults(true);
+      setLoadError(null);
 
-    setFilteredTrains(matches);
-    setShowResults(true);
-
-    if (matches.length === 0) {
-      toast({
-        title: 'No trains found',
-        description: 'Try different station names.',
+      if (matches.length === 0) {
+        toast({
+          title: 'No trains found',
+          description: 'Try different station names.',
+        });
+      }
+    } catch (err: any) {
+      const fallbackMatches = allTrains.filter((train) => {
+        const trainSource = normalize(train.source || '');
+        const trainDestination = normalize(train.destination || '');
+        return trainSource.includes(sourceQuery) && trainDestination.includes(destinationQuery);
       });
+
+      setFilteredTrains(fallbackMatches);
+      setShowResults(true);
+
+      toast({
+        title: 'Search issue',
+        description:
+          fallbackMatches.length > 0
+            ? 'Live search is slow right now. Showing cached train results.'
+            : err?.message || 'Please try again.',
+        variant: fallbackMatches.length > 0 ? 'default' : 'destructive',
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -101,6 +130,10 @@ const Search = () => {
     setDestination('');
     setFilteredTrains(allTrains);
     setShowResults(false);
+
+    if (!allTrains.length) {
+      loadAllTrains();
+    }
   };
 
   const handleBook = async (train: Train) => {
@@ -241,7 +274,14 @@ const Search = () => {
           </div>
         ) : filteredTrains.length === 0 ? (
           <div className="rounded-2xl bg-white py-14 text-center shadow-sm">
-            <p className="text-[#617286]">No trains found</p>
+            <p className="text-[#617286]">{loadError ? 'Unable to load trains right now' : 'No trains found'}</p>
+            {loadError && (
+              <div className="mt-4">
+                <Button onClick={loadAllTrains} className="rounded-full bg-[#ec933a] text-white hover:bg-[#e3872a]">
+                  Retry
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
