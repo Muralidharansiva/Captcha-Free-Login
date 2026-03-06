@@ -12,7 +12,7 @@ from django.contrib.auth.models import User
 from django.core import signing
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
-from django.core.mail import send_mail
+from django.core.mail import send_mail, get_connection
 from django.db import transaction
 from django.http import JsonResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -240,6 +240,26 @@ def _masked_email(email):
     return f"{masked_local}@{domain}"
 
 
+def _send_login_otp_email(email, otp):
+    """
+    Send login OTP with a bounded SMTP timeout so login requests do not hang.
+    Returns True when at least one message is accepted by the backend.
+    """
+    try:
+        connection = get_connection(timeout=getattr(settings, "EMAIL_TIMEOUT", 10))
+        sent_count = send_mail(
+            "Your Login OTP",
+            f"Your OTP is {otp}",
+            settings.DEFAULT_FROM_EMAIL or "noreply@example.com",
+            [email],
+            fail_silently=False,
+            connection=connection,
+        )
+        return sent_count > 0
+    except Exception:
+        return False
+
+
 def _resolve_user_profile(identity, create=False):
     identity = (identity or "").strip()
     if not identity:
@@ -318,13 +338,11 @@ def login_view(request):
         ip_address=_client_ip(request),
     )
 
-    send_mail(
-        "Your Login OTP",
-        f"Your OTP is {otp}",
-        "noreply@test.com",
-        [user.email],
-        fail_silently=True
-    )
+    otp_sent = _send_login_otp_email(user.email, otp)
+    if not otp_sent:
+        otp_record.delete()
+        _record_attempt(request, status="blocked", username=user.username, email=user.email)
+        return JsonResponse({"error": "Unable to send OTP email. Try again shortly."}, status=503)
     challenge_token = signing.dumps(
         {
             "otp_id": otp_record.id,
