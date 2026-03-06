@@ -44,10 +44,18 @@ export const API_BASE_URL = NORMALIZED_BASE_URL.endsWith('/api')
   ? NORMALIZED_BASE_URL
   : `${NORMALIZED_BASE_URL}/api`;
 
-// Generous defaults for Render cold starts.
-const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 90000);
+// Render free cold starts can exceed one minute.
+const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 150000);
 const MAX_GET_RETRIES = Number(import.meta.env.VITE_API_GET_RETRIES || 2);
-const MAX_NON_GET_RETRIES = Number(import.meta.env.VITE_API_NON_GET_RETRIES || 0);
+const MAX_NON_GET_RETRIES = Number(import.meta.env.VITE_API_NON_GET_RETRIES || 1);
+
+const RETRYABLE_POST_ENDPOINT_PREFIXES = [
+  'login/',
+  'verify-email-otp/',
+  'register/',
+  'admin/session/',
+  '',
+];
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -63,6 +71,11 @@ const parseResponseBody = async (response: Response): Promise<any> => {
   } catch {
     return null;
   }
+};
+
+const isRetryablePostEndpoint = (endpoint: string): boolean => {
+  const pathOnly = endpoint.split('?')[0];
+  return RETRYABLE_POST_ENDPOINT_PREFIXES.some((prefix) => pathOnly === prefix || pathOnly.startsWith(prefix));
 };
 
 /**
@@ -120,13 +133,20 @@ export const api = async <T = any>(
       const isNetworkError =
         error?.name === 'TypeError' && /Failed to fetch/i.test(error?.message || '');
       const isTimeoutError = error?.name === 'AbortError';
-      const retryBudget = methodUpper === 'GET' ? MAX_GET_RETRIES : MAX_NON_GET_RETRIES;
+
+      const retryBudget =
+        methodUpper === 'GET'
+          ? MAX_GET_RETRIES
+          : methodUpper === 'POST' && isRetryablePostEndpoint(cleanEndpoint)
+            ? MAX_NON_GET_RETRIES
+            : 0;
+
       const canRetry =
         attempt < retryBudget && (isNetworkError || isTimeoutError);
 
       if (canRetry) {
         attempt += 1;
-        await sleep(1200 * attempt);
+        await sleep(1500 * attempt);
         continue;
       }
 
@@ -143,3 +163,4 @@ export const api = async <T = any>(
     }
   }
 };
+
